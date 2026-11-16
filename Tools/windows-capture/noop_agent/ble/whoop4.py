@@ -102,9 +102,15 @@ class Whoop4Device:
         self._chunk_frames.clear()
         self._notify_state("disconnected", "Link dropped")
 
+    def _current_device_id(self) -> str:
+        """Resolve current active device ID or target address."""
+        if self.device_info and self.device_info.address:
+            return self.device_info.address
+        return self.target_address or "whoop4"
+
     def _on_sig_hr(self, bpm: int, rr_list):
         """Handle standard Bluetooth SIG heart rate measurement."""
-        device_id = self.device_info.address if self.device_info else "whoop4"
+        device_id = self._current_device_id()
         now = datetime.datetime.now(datetime.timezone.utc)
 
         rec = ObservationProvenance(
@@ -123,7 +129,7 @@ class Whoop4Device:
 
     def _on_sig_battery(self, level_pct: int):
         """Handle standard Bluetooth SIG battery level notification."""
-        device_id = self.device_info.address if self.device_info else "whoop4"
+        device_id = self._current_device_id()
         now = datetime.datetime.now(datetime.timezone.utc)
 
         rec = ObservationProvenance(
@@ -142,7 +148,7 @@ class Whoop4Device:
 
     def _on_reassembled_frame(self, char_uuid: str, frame_bytes: bytes):
         """Handle complete reassembled frame from proprietary WHOOP 4.0 notify channel."""
-        device_id = self.device_info.address if self.device_info else "whoop4"
+        device_id = self._current_device_id()
         inner_type = frame_bytes[4] if len(frame_bytes) > 4 else None
 
         # Check for historical offload stream frames
