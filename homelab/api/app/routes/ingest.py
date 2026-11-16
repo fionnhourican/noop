@@ -77,11 +77,24 @@ async def ingest_batch(
     accepted = 0
     duplicates = 0
     rejected = 0
+    battery_pct = None
+    battery_mv = None
+    sample_dates = set()
 
     # 3. Process records inside the session transaction
     for rec in payload.records:
         try:
             async with db.begin_nested():
+                # Extract battery telemetry if present
+                if rec.type == "battery":
+                    if isinstance(rec.value, dict):
+                        battery_pct = rec.value.get("soc_percent")
+                        battery_mv = rec.value.get("voltage_mv")
+                    elif isinstance(rec.value, (int, float)):
+                        battery_pct = float(rec.value)
+                    elif rec.metadata and "soc_percent" in rec.metadata:
+                        battery_pct = rec.metadata.get("soc_percent")
+
                 # Store raw frame if provided
                 raw_frame_id = None
                 if rec.raw_frame_hex and rec.char_uuid:
@@ -133,6 +146,8 @@ async def ingest_batch(
 
                 # Store typed normalized record
                 if rec.type == "heart_rate" and rec.value is not None:
+                    if rec.timestamp:
+                        sample_dates.add(rec.timestamp.date())
                     hr_stmt = (
                         pg_insert(HeartRateSample)
                         .values(
@@ -147,6 +162,8 @@ async def ingest_batch(
                     await db.execute(hr_stmt)
 
                 elif rec.type == "biometric":
+                    if rec.timestamp:
+                        sample_dates.add(rec.timestamp.date())
                     meta = rec.metadata or {}
                     bio_stmt = (
                         pg_insert(BiometricRecord)
@@ -173,42 +190,116 @@ async def ingest_batch(
                     )
                     await db.execute(bio_stmt)
 
-                elif rec.type == "collector_status":
-                    meta = rec.metadata or {}
-                    col_stmt = (
-                        pg_insert(CollectorStatus)
-                        .values(
-                            device_id=payload.device_id,
-                            last_seen=rec.timestamp,
-                            connection_state=meta.get("connection_state", "connected"),
-                            battery_percentage=meta.get("battery_pct"),
-                            battery_millivolts=meta.get("battery_mV"),
-                            is_charging=meta.get("is_charging"),
-                            queued_records=meta.get("queued_records", 0),
-                            last_sync_timestamp=now_utc,
-                            agent_version=rec.decoder_version,
-                        )
-                        .on_conflict_do_update(
-                            index_elements=["device_id"],
-                            set_={
-                                "last_seen": rec.timestamp,
-                                "connection_state": meta.get("connection_state", "connected"),
-                                "battery_percentage": meta.get("battery_pct"),
-                                "battery_millivolts": meta.get("battery_mV"),
-                                "is_charging": meta.get("is_charging"),
-                                "queued_records": meta.get("queued_records", 0),
-                                "last_sync_timestamp": now_utc,
-                                "agent_version": rec.decoder_version,
-                            },
-                        )
-                    )
-                    await db.execute(col_stmt)
-
             accepted += 1
 
         except Exception as e:
             logger.error(f"Error processing record {rec.record_id}: {e}")
             rejected += 1
+
+    # Upsert CollectorStatus for this device
+    col_update_dict = {
+        "last_seen": now_utc,
+        "connection_state": "connected",
+        "last_sync_timestamp": now_utc,
+    }
+    if battery_pct is not None:
+        col_update_dict["battery_percentage"] = float(battery_pct)
+    if battery_mv is not None:
+        col_update_dict["battery_millivolts"] = int(battery_mv)
+
+    col_stmt = (
+        pg_insert(CollectorStatus)
+        .values(
+            device_id=payload.device_id,
+            last_seen=now_utc,
+            connection_state="connected",
+            battery_percentage=float(battery_pct) if battery_pct is not None else 10.0,
+            battery_millivolts=int(battery_mv) if battery_mv is not None else None,
+            queued_records=0,
+            last_sync_timestamp=now_utc,
+            agent_version="1.0.0",
+        )
+        .on_conflict_do_update(
+            index_elements=["device_id"],
+            set_=col_update_dict,
+        )
+    )
+    await db.execute(col_stmt)
+
+    # Compute daily strain and recovery for affected dates
+    from app.services.analytics import calculate_banister_trimp, trimp_to_strain, calculate_recovery_score
+
+    for d in sample_dates:
+        start_dt = datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc)
+        end_dt = datetime.combine(d, datetime.max.time(), tzinfo=timezone.utc)
+
+        hr_q = select(HeartRateSample.bpm).where(
+            HeartRateSample.device_id == payload.device_id,
+            HeartRateSample.timestamp >= start_dt,
+            HeartRateSample.timestamp <= end_dt,
+        )
+        hr_rows = (await db.execute(hr_q)).scalars().all()
+        if hr_rows:
+            bpms = list(hr_rows)
+            accum_trimp = sum(calculate_banister_trimp(b) for b in bpms)
+            day_strain = trimp_to_strain(accum_trimp)
+            avg_hr = round(sum(bpms) / len(bpms), 1)
+            max_hr = max(bpms)
+
+            strain_stmt = (
+                pg_insert(StrainMetric)
+                .values(
+                    metric_id=f"strain_{payload.device_id}_{d.isoformat()}",
+                    device_id=payload.device_id,
+                    date=d,
+                    strain_score=day_strain,
+                    average_hr=avg_hr,
+                    max_hr=max_hr,
+                    algorithm_version="noop_strain_banister_v1",
+                )
+                .on_conflict_do_update(
+                    index_elements=["device_id", "date"],
+                    set_={
+                        "strain_score": day_strain,
+                        "average_hr": avg_hr,
+                        "max_hr": max_hr,
+                    },
+                )
+            )
+            await db.execute(strain_stmt)
+
+            bio_q = select(BiometricRecord.rmssd).where(
+                BiometricRecord.device_id == payload.device_id,
+                BiometricRecord.timestamp >= start_dt,
+                BiometricRecord.timestamp <= end_dt,
+                BiometricRecord.rmssd.isnot(None),
+            )
+            rmssds = [r for r in (await db.execute(bio_q)).scalars().all() if r is not None]
+            hrv = round(sum(rmssds) / len(rmssds), 1) if rmssds else 65.0
+            rhr = float(min(bpms))
+            rec_score, _ = calculate_recovery_score(hrv_rmssd=hrv, resting_hr=rhr)
+
+            rec_stmt = (
+                pg_insert(RecoveryMetric)
+                .values(
+                    metric_id=f"recovery_{payload.device_id}_{d.isoformat()}",
+                    device_id=payload.device_id,
+                    date=d,
+                    recovery_score=rec_score,
+                    hrv_rmssd=hrv,
+                    resting_heart_rate=rhr,
+                    algorithm_version="noop_recovery_v1",
+                )
+                .on_conflict_do_update(
+                    index_elements=["device_id", "date"],
+                    set_={
+                        "recovery_score": rec_score,
+                        "hrv_rmssd": hrv,
+                        "resting_heart_rate": rhr,
+                    },
+                )
+            )
+            await db.execute(rec_stmt)
 
     # Record sync batch summary
     sync_batch_stmt = (
