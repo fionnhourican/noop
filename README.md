@@ -62,6 +62,7 @@ Pre-built apps you can run right now:
 | **macOS** | `NOOP.app` (see [Releases](https://github.com/ryanbr/noop/releases)) | Apple Silicon + Intel. Drag to Applications. Not notarized — see **First launch on macOS** below. _(A Homebrew cask isn't currently published for this fork — grab the `.app` from Releases.)_ |
 | **Android** | `NOOP-full.apk` (see [Releases](https://github.com/ryanbr/noop/releases)) | The full app. `minSdk 26` (Android 8+). Sideload — enable "install unknown apps". Blocked by Play Protect? See **Installing on Android** below. |
 | **iOS** | **AltStore / SideStore source** (recommended — one-tap install + auto-updates): add `https://raw.githubusercontent.com/ryanbr/noop/main/altstore-source.json` as a source. Or a **direct** [`NOOP-vX-ios.ipa`](https://github.com/ryanbr/noop/releases) download. | The `.ipa` is unsigned; **you** sign it on your iPhone with your own free Apple ID (no App Store, no developer account — NOOP stays anonymous). Re-signs every 7 days (AltStore/SideStore automates it). See [docs/IOS.md](docs/IOS.md). Or build from source in Xcode. |
+| **Home Lab & Web** | **Docker + Windows 11 Collector** | Self-hosted 24/7 web dashboard + background BLE gateway for WHOOP 4.0 over Tailscale. See [NOOP Home Lab](#noop-home-lab--self-hosted-web-dashboard--windows-11-collector). |
 
 > **First launch on macOS.** NOOP is **not notarized** by Apple — notarization needs a paid Apple
 > Developer ID tied to a real identity, which doesn't fit an anonymous, free project. The app *is*
@@ -612,6 +613,25 @@ Two simple asks:
 - **Point people back to the canonical home, [github.com/ryanbr/noop](https://github.com/ryanbr/noop)**, so everyone lands on the current code and releases rather than a stale fork.
 
 That's it — copy away.
+
+---
+
+## NOOP Home Lab — Self-Hosted Web Dashboard & Windows 11 Collector
+
+For users who want a 24/7 personal health server and web dashboard accessible from any browser across their private Tailscale mesh network:
+
+```
+WHOOP 4.0 (BLE)  --->  Windows 11 Collector Agent  --->  Linux Home Server (Docker + Tailscale)
+                                                                 │
+                                                       Web Dashboard & API
+                                              (PostgreSQL 17 + FastAPI + React)
+```
+
+- **Linux Home Server** (`homelab/`): Runs Docker Compose with PostgreSQL 17, FastAPI backend, and React dashboard with real-time WebSocket heart rate, recovery gauge, and TRIMP day strain.
+- **Windows 11 Collector** (`Tools/windows-capture/`): Runs silently in the background, pairs directly with your WHOOP 4.0 via Bluetooth, buffers to local SQLite in WAL mode, and syncs batches over Tailscale.
+- **Zero Cloud / Offline-First**: No external servers, no telemetry, no subscriptions. Everything stays strictly on your personal hardware.
+
+👉 **[Complete Step-by-Step Home Lab Setup Guide](homelab/README.md)**
 
 ---
 
