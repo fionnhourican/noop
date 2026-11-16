@@ -3,9 +3,11 @@ import {
   DashboardSummary,
   Device,
   HeartRateSample,
+  IllnessEvaluationResponse,
   RecoveryMetric,
   SleepSession,
   StrainMetric,
+  VitalSignsResponse,
   Workout,
 } from "../types";
 
@@ -79,4 +81,10 @@ export const api = {
   getCollectorStatus: () => apiFetch<CollectorStatus>("/collector/status"),
 
   getDevices: () => apiFetch<Device[]>("/devices"),
+
+  getVitals: (deviceId?: string) =>
+    apiFetch<VitalSignsResponse>(deviceId ? `/health/vitals?device_id=${encodeURIComponent(deviceId)}` : "/health/vitals"),
+
+  getIllnessCheck: (deviceId?: string) =>
+    apiFetch<IllnessEvaluationResponse>(deviceId ? `/health/illness-check?device_id=${encodeURIComponent(deviceId)}` : "/health/illness-check"),
 };

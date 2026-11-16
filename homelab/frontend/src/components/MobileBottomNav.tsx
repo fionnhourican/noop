@@ -1,7 +1,7 @@
 import React from "react";
-import { Activity, Dumbbell, Flame, Laptop, Moon, Sparkles, TrendingUp } from "lucide-react";
+import { Activity, Dumbbell, Flame, Laptop, Moon, ShieldCheck, Sparkles, TrendingUp } from "lucide-react";
 
-export type TabId = "overview" | "recovery" | "strain" | "sleep" | "workouts" | "system";
+export type TabId = "overview" | "vitals" | "recovery" | "strain" | "sleep" | "workouts" | "system";
 
 interface MobileBottomNavProps {
   activeTab: TabId;
@@ -11,6 +11,7 @@ interface MobileBottomNavProps {
 export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({ activeTab, onSelectTab }) => {
   const tabs = [
     { id: "overview" as TabId, label: "Today", icon: Activity },
+    { id: "vitals" as TabId, label: "Vitals", icon: ShieldCheck },
     { id: "recovery" as TabId, label: "Recovery", icon: Sparkles },
     { id: "strain" as TabId, label: "Strain", icon: Flame },
     { id: "sleep" as TabId, label: "Sleep", icon: Moon },

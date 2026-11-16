@@ -51,6 +51,8 @@ export interface SleepSession {
   rem_seconds?: number;
   wake_seconds?: number;
   sleep_efficiency?: number;
+  sleep_debt_minutes?: number;
+  sleep_need_minutes?: number;
   stages: SleepStage[];
 }
 
@@ -77,12 +79,44 @@ export interface CollectorStatus {
   agent_version: string;
 }
 
+export interface VitalBandItem {
+  metric: string;
+  label: string;
+  value?: number;
+  unit: string;
+  band: "in_range" | "out_of_range" | "no_data";
+  basis: "personal" | "population";
+  baseline_mean?: number;
+  baseline_min?: number;
+  baseline_max?: number;
+  nights_count: number;
+  z_score?: number;
+}
+
+export interface VitalSignsResponse {
+  vitals: VitalBandItem[];
+  evaluated_at: string;
+}
+
+export interface IllnessEvaluationResponse {
+  score: number;
+  level: "quiet" | "mild" | "raised" | "suppressed" | "already_unwell";
+  fired_signals: string[];
+  suppressed_by: string[];
+  signal_count: number;
+  message: string;
+  copy: string;
+  disclaimer: string;
+}
+
 export interface DashboardSummary {
   latest_heart_rate?: HeartRateSample;
   latest_recovery?: RecoveryMetric;
   latest_strain?: StrainMetric;
   latest_sleep?: SleepSession;
   collector_status?: CollectorStatus;
+  vitals?: VitalSignsResponse;
+  illness_check?: IllnessEvaluationResponse;
 }
 
 export interface LiveWebSocketMessage {

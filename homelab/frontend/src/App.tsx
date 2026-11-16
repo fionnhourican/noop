@@ -7,6 +7,7 @@ import {
   Heart,
   Laptop,
   Moon,
+  ShieldCheck,
   Sparkles,
   TrendingUp,
 } from "lucide-react";
@@ -17,11 +18,13 @@ import { AuthModal } from "./components/AuthModal";
 import { CollectorStatusCard } from "./components/CollectorStatus";
 import { Header } from "./components/Header";
 import { HeartRateChart } from "./components/HeartRateChart";
+import { IllnessAlertBanner } from "./components/IllnessAlertBanner";
 import { LiveHeartRate } from "./components/LiveHeartRate";
 import { MobileBottomNav, TabId } from "./components/MobileBottomNav";
 import { RecoveryGauge } from "./components/RecoveryGauge";
 import { SleepBreakdown } from "./components/SleepBreakdown";
 import { StrainMeter } from "./components/StrainMeter";
+import { VitalSignsCard } from "./components/VitalSignsCard";
 import { WorkoutsList } from "./components/WorkoutsList";
 import { useLiveStream } from "./hooks/useLiveStream";
 import {
@@ -135,10 +138,14 @@ export function App() {
           </div>
         )}
 
+        {/* Illness Early-Warning Anomaly Banner (Shown if Raised / Mild / Suppressed) */}
+        <IllnessAlertBanner illness={summary?.illness_check} />
+
         {/* Desktop Navigation Tabs */}
         <div className="hidden md:flex items-center gap-1.5 overflow-x-auto pb-1 border-b border-white/10">
           {[
             { id: "overview" as TabId, label: "Today Overview", icon: Activity },
+            { id: "vitals" as TabId, label: "Vitals & Health", icon: ShieldCheck },
             { id: "recovery" as TabId, label: "Recovery", icon: Sparkles },
             { id: "strain" as TabId, label: "Day Strain", icon: Flame },
             { id: "sleep" as TabId, label: "Sleep", icon: Moon },
@@ -186,6 +193,9 @@ export function App() {
               />
             </div>
 
+            {/* Health Monitor: Vitals 5-Metric Matrix */}
+            <VitalSignsCard vitals={summary?.vitals?.vitals} />
+
             {/* Second Row: Sleep & Recent Heart Rate Trace */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <SleepBreakdown sleep={summary?.latest_sleep} />
@@ -200,11 +210,25 @@ export function App() {
           </div>
         )}
 
-        {/* Tab 2: Recovery Detail */}
+        {/* Tab 2: Vitals & Health Monitor Detail */}
+        {activeTab === "vitals" && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <VitalSignsCard vitals={summary?.vitals?.vitals} />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <RecoveryGauge recovery={summary?.latest_recovery} />
+              <HeartRateChart samples={heartRates} />
+            </div>
+          </div>
+        )}
+
+        {/* Tab 3: Recovery Detail */}
         {activeTab === "recovery" && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in duration-300">
-            <RecoveryGauge recovery={summary?.latest_recovery} />
-            <HeartRateChart samples={heartRates} />
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <RecoveryGauge recovery={summary?.latest_recovery} />
+              <HeartRateChart samples={heartRates} />
+            </div>
+            <VitalSignsCard vitals={summary?.vitals?.vitals} />
           </div>
         )}
 

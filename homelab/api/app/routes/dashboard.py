@@ -19,6 +19,7 @@ from app.models.entities import (
     StrainMetric,
     SyncBatch,
 )
+from app.routes.health import compute_device_vitals_and_illness
 from app.schemas.domain import (
     CollectorStatusResponse,
     DashboardSummaryResponse,
@@ -31,6 +32,7 @@ from app.security import get_current_dashboard_user
 from app.services.analytics import (
     calculate_banister_trimp,
     calculate_recovery_score,
+    calculate_sleep_debt_ledger,
     trimp_to_strain,
 )
 
@@ -159,6 +161,19 @@ async def get_dashboard_summary(
         slp_q = slp_q.where(SleepSession.device_id == device_id)
     slp_res = await db.execute(slp_q.order_by(SleepSession.end_time.desc()).limit(1))
     latest_sleep = slp_res.scalars().first()
+    sleep_resp = None
+    if latest_sleep:
+        sleep_resp = SleepSessionResponse.model_validate(latest_sleep)
+        # Calculate sleep debt from recent 14 sleep sessions
+        recent_slp_q = select(SleepSession.duration_seconds)
+        if device_id:
+            recent_slp_q = recent_slp_q.where(SleepSession.device_id == device_id)
+        recent_slp_res = await db.execute(recent_slp_q.order_by(SleepSession.start_time.asc()).limit(14))
+        durations_sec = list(recent_slp_res.scalars().all())
+        slept_min_series = [d / 60.0 for d in durations_sec if d and d > 0]
+        debt_data = calculate_sleep_debt_ledger(slept_min_series, need_hours=8.0)
+        sleep_resp.sleep_debt_minutes = debt_data["balance_min"]
+        sleep_resp.sleep_need_minutes = debt_data["need_min"]
 
     # Latest Collector Status
     col_q = select(CollectorStatus)
@@ -189,10 +204,15 @@ async def get_dashboard_summary(
             await db.commit()
             await db.refresh(latest_col)
 
+    # Compute vitals & illness status
+    vitals_resp, illness_resp = await compute_device_vitals_and_illness(db, device_id)
+
     return DashboardSummaryResponse(
         latest_heart_rate=HeartRateResponse.model_validate(latest_hr) if latest_hr else None,
         latest_recovery=RecoveryResponse.model_validate(latest_rec) if latest_rec else None,
         latest_strain=StrainResponse.model_validate(latest_strain) if latest_strain else None,
-        latest_sleep=SleepSessionResponse.model_validate(latest_sleep) if latest_sleep else None,
+        latest_sleep=sleep_resp,
         collector_status=CollectorStatusResponse.model_validate(latest_col) if latest_col else None,
+        vitals=vitals_resp,
+        illness_check=illness_resp,
     )

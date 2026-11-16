@@ -8,6 +8,7 @@ from app.config import settings
 from app.routes.collector import router as collector_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.devices import router as devices_router
+from app.routes.health import router as health_router
 from app.routes.heart_rate import router as heart_rate_router
 from app.routes.ingest import router as ingest_router
 from app.routes.live import router as live_router
@@ -38,6 +39,7 @@ app.add_middleware(
 app.include_router(live_router)
 app.include_router(ingest_router, prefix=settings.API_V1_PREFIX)
 app.include_router(dashboard_router, prefix=settings.API_V1_PREFIX)
+app.include_router(health_router, prefix=settings.API_V1_PREFIX)
 app.include_router(heart_rate_router, prefix=settings.API_V1_PREFIX)
 app.include_router(recovery_router, prefix=settings.API_V1_PREFIX)
 app.include_router(strain_router, prefix=settings.API_V1_PREFIX)

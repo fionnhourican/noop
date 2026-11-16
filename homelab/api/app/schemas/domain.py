@@ -61,6 +61,8 @@ class SleepSessionResponse(BaseModel):
     rem_seconds: Optional[int] = None
     wake_seconds: Optional[int] = None
     sleep_efficiency: Optional[float] = None
+    sleep_debt_minutes: Optional[float] = None
+    sleep_need_minutes: Optional[float] = None
     stages: List[SleepStageResponse] = []
 
 
@@ -115,9 +117,41 @@ class CollectorStatusResponse(BaseModel):
     agent_version: str
 
 
+class VitalBandItem(BaseModel):
+    metric: str
+    label: str
+    value: Optional[float] = None
+    unit: str
+    band: str  # "in_range", "out_of_range", "no_data"
+    basis: str  # "personal", "population"
+    baseline_mean: Optional[float] = None
+    baseline_min: Optional[float] = None
+    baseline_max: Optional[float] = None
+    nights_count: int = 0
+    z_score: Optional[float] = None
+
+
+class VitalSignsResponse(BaseModel):
+    vitals: List[VitalBandItem] = []
+    evaluated_at: datetime
+
+
+class IllnessEvaluationResponse(BaseModel):
+    score: float
+    level: str  # "quiet", "mild", "raised", "suppressed", "already_unwell"
+    fired_signals: List[str] = []
+    suppressed_by: List[str] = []
+    signal_count: int = 0
+    message: str
+    copy: str
+    disclaimer: str
+
+
 class DashboardSummaryResponse(BaseModel):
     latest_heart_rate: Optional[HeartRateResponse] = None
     latest_recovery: Optional[RecoveryResponse] = None
     latest_strain: Optional[StrainResponse] = None
     latest_sleep: Optional[SleepSessionResponse] = None
     collector_status: Optional[CollectorStatusResponse] = None
+    vitals: Optional[VitalSignsResponse] = None
+    illness_check: Optional[IllnessEvaluationResponse] = None
