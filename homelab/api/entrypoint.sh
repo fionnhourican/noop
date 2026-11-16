@@ -8,19 +8,19 @@ echo "Checking database connection..."
 max_retries=30
 counter=0
 
-until python -c "
+until python -c '
 import sys
 from app.config import settings
 from sqlalchemy import create_engine, text
 try:
-    engine = create_engine(settings.sync_database_url, connect_args={'connect_timeout': 2})
+    engine = create_engine(settings.sync_database_url, connect_args={"connect_timeout": 2})
     with engine.connect() as conn:
-        conn.execute(text('SELECT 1'))
+        conn.execute(text("SELECT 1"))
     sys.exit(0)
 except Exception as e:
     print(f"Database connection attempt failed: {e}", file=sys.stderr)
     sys.exit(1)
-"; do
+'; do
     counter=$((counter + 1))
     if [ $counter -ge $max_retries ]; then
         echo "Warning: Database not ready after $max_retries attempts. Proceeding..."
