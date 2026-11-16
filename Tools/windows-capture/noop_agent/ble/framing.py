@@ -4,11 +4,24 @@ import struct
 import zlib
 from typing import List, Optional, Tuple
 
-from noop_agent.ble.characteristics import PACKET_COMMAND
+from noop_agent.ble.characteristics import (
+    CMD_HISTORICAL_DATA_RESULT,
+    META_HISTORY_COMPLETE,
+    META_HISTORY_END,
+    META_HISTORY_START,
+    PACKET_COMMAND,
+    PACKET_METADATA,
+)
 
 # Minimum bytes for a structurally valid WHOOP 4.0 frame:
 # [0xAA] + [len u16 LE] + [crc8] + [type] + [seq] + [cmd] + [crc32 LE] = 1 + 2 + 1 + 3 + 4 = 11 bytes
 WHOOP4_MIN_FRAME_BYTES = 11
+
+# WHOOP 4.0 Metadata Offsets
+WHOOP4_INNER_OFF = 4
+WHOOP4_META_TYPE_OFF = 6
+WHOOP4_META_TRIM_OFF = 17
+WHOOP4_END_DATA_LEN = 8
 
 
 def _crc8_table() -> List[int]:
@@ -75,6 +88,40 @@ def verify_whoop4_frame(frame: bytes) -> bool:
     inner = bytes(frame[4:total - 4])
     wire_crc = struct.unpack_from("<I", frame, total - 4)[0]
     return crc32(inner) == wire_crc
+
+
+def history_end_data_whoop4(frame: bytes) -> Optional[bytes]:
+    """If `frame` is a CRC-valid WHOOP 4.0 METADATA HISTORY_END, return its 8-byte end_data
+
+    (trim u32 + next u32 at frame[17:25]) to echo back in the trim acknowledgment.
+    """
+    if len(frame) < WHOOP4_META_TRIM_OFF + WHOOP4_END_DATA_LEN:
+        return None
+    if frame[WHOOP4_INNER_OFF] != PACKET_METADATA:
+        return None
+    if frame[WHOOP4_META_TYPE_OFF] != META_HISTORY_END:
+        return None
+    if not verify_whoop4_frame(frame):
+        return None
+    return bytes(frame[WHOOP4_META_TRIM_OFF:WHOOP4_META_TRIM_OFF + WHOOP4_END_DATA_LEN])
+
+
+def build_history_ack_whoop4(end_data: bytes, seq: int = 0) -> bytes:
+    """Build the WHOOP 4.0 HISTORICAL_DATA_RESULT(23) ack: payload = 0x01 + 8-byte end_data."""
+    return build_command_frame(
+        CMD_HISTORICAL_DATA_RESULT,
+        seq=seq,
+        payload=b"\x01" + bytes(end_data),
+    )
+
+
+def is_metadata_frame(frame: bytes, expected_meta_type: Optional[int] = None) -> bool:
+    """Check if a frame is a valid METADATA frame matching the optional meta_type."""
+    if len(frame) < 7 or frame[0] != 0xAA or frame[WHOOP4_INNER_OFF] != PACKET_METADATA:
+        return False
+    if expected_meta_type is not None and frame[WHOOP4_META_TYPE_OFF] != expected_meta_type:
+        return False
+    return verify_whoop4_frame(frame)
 
 
 class Reassembler:

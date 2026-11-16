@@ -61,7 +61,7 @@ python -m noop_agent.main
 
 ### System Tray Status Indicators
 Once running, the NOOP icon appears in your system tray:
-- **Green**: Connected to WHOOP 4.0 / Collecting data.
+- **Green**: Connected to WHOOP 4.0 / Live stream active (displays current HR & battery).
 - **Yellow**: Scanning for strap or synchronizing with server.
 - **Grey**: Disconnected / Waiting for strap to enter range.
 - **Red**: Error (check log file).
@@ -75,7 +75,28 @@ Right-click the tray icon to:
 
 ---
 
-## 5. Troubleshooting
+## 5. Architecture & Reliability Guarantees
+
+### Dual Collection Pipelines
+- **Live Pipeline**: Real-time heart rate and R-R intervals are streamed via standard Bluetooth SIG (`0x2A37`) and proprietary notifications into an asynchronous, bounded queue (1000 items) with backpressure protection.
+- **Historical Pipeline**: When reconnecting or during periodic drains (every 5 minutes), the agent requests unread records via `CMD_SEND_HISTORICAL_DATA` (22).
+
+### Persist-Before-ACK Invariant
+The agent enforces strict data preservation:
+1. When a historical chunk arrives (`META_HISTORY_START` through `META_HISTORY_END`), all raw BLE frames and decoded observation records are committed durably to the local SQLite database.
+2. The confirmed trim acknowledgment `CMD_HISTORICAL_DATA_RESULT` (23) is transmitted to the WHOOP strap **only after** SQLite write confirmation.
+3. If SQLite write fails (e.g. disk full), the ACK is suppressed so the strap does not advance its trim cursor and delete the records.
+
+### Resilient Synchronization
+- **Durable Local Staging**: Records are staged in `%LOCALAPPDATA%\NOOP\collector.sqlite` in SQLite WAL mode.
+- **Transactional Batch Ingestion**: Records are batched and uploaded to `POST /api/v1/ingest/batches`. Batches are marked `synced` only upon HTTP 200 OK server response.
+- **Crash Recovery**: Orphaned in-flight records are automatically restored to `pending` on agent restart.
+- **Exponential Backoff & Full Jitter**: Network errors, 5xx server errors, and 429 rate limits dynamically trigger exponential backoff with full jitter to avoid server thundering herds.
+- **Retry-After Header**: HTTP 429 and 503 `Retry-After` headers are parsed and respected automatically.
+
+---
+
+## 6. Troubleshooting
 
 - **Logs Location**: `%LOCALAPPDATA%\NOOP\logs\collector.log`
 - **Database Location**: `%LOCALAPPDATA%\NOOP\collector.sqlite`
@@ -83,7 +104,7 @@ Right-click the tray icon to:
 
 ---
 
-## 6. Uninstallation
+## 7. Uninstallation
 
 To cleanly stop the agent and remove it from automatic startup:
 
