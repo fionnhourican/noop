@@ -37,39 +37,55 @@ class DurableQueue:
     def enqueue_raw_frame(
         self,
         device_id: str,
-        frame_bytes: bytes,
+        frame: Any = None,
         char_uuid: str = "",
         inner_type: Optional[int] = None,
         recv_ms: Optional[int] = None,
+        frame_bytes: Optional[bytes] = None,
+        frame_hex: Optional[str] = None,
     ) -> Optional[int]:
-        """Store immutable raw BLE frame. Ignores duplicates."""
+        """Store an immutable raw frame (ignores duplicates). Returns rowid or None."""
         if recv_ms is None:
             recv_ms = now_ms()
-        frame_hex = frame_bytes.hex()
+
+        raw_bytes = frame if isinstance(frame, bytes) else frame_bytes
+        if raw_bytes is not None:
+            hex_str = raw_bytes.hex()
+            if inner_type is None and len(raw_bytes) > 4:
+                inner_type = raw_bytes[4]
+        elif isinstance(frame, str):
+            hex_str = frame
+        elif frame_hex is not None:
+            hex_str = frame_hex
+        else:
+            return None
+
         conn = self.db.get_connection()
-        with conn:
-            cur = conn.execute(
-                """
-                INSERT OR IGNORE INTO raw_frames (device_id, recv_ms, char_uuid, inner_type, frame_hex)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (device_id, recv_ms, char_uuid, inner_type, frame_hex),
-            )
-            if cur.lastrowid:
-                return cur.lastrowid
-            # Retrieve existing id if duplicate
-            row = conn.execute(
-                "SELECT id FROM raw_frames WHERE device_id = ? AND frame_hex = ?",
-                (device_id, frame_hex),
-            ).fetchone()
-            return row["id"] if row else None
+        try:
+            with conn:
+                cur = conn.execute(
+                    "INSERT INTO raw_frames(device_id, recv_ms, char_uuid, inner_type, frame_hex) "
+                    "VALUES(?, ?, ?, ?, ?) "
+                    "ON CONFLICT(device_id, frame_hex) DO NOTHING",
+                    (device_id, recv_ms, char_uuid, inner_type, hex_str),
+                )
+                if cur.rowcount > 0:
+                    return cur.lastrowid
+                else:
+                    row = conn.execute(
+                        "SELECT id FROM raw_frames WHERE device_id = ? AND frame_hex = ?",
+                        (device_id, hex_str),
+                    ).fetchone()
+                    return row["id"] if row else None
+        except Exception:
+            return None
 
     def enqueue_record(
         self,
         device_id: str,
         record_type: str,
-        timestamp_utc: datetime,
-        value: Any,
+        timestamp: datetime,
+        value: Any = None,
         unit: Optional[str] = None,
         data_origin: str = "live",
         validation_status: str = "valid",
@@ -77,12 +93,14 @@ class DurableQueue:
         decoder_version: str = "1.0.0",
         raw_frame_id: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        timestamp_utc: Optional[datetime] = None,
         reception_utc: Optional[datetime] = None,
     ) -> str:
         """Enqueue an observation record for sync."""
         record_id = str(uuid.uuid4())
         created = now_ms()
-        t_iso = utc_iso(timestamp_utc)
+        effective_ts = timestamp_utc or timestamp
+        t_iso = utc_iso(effective_ts)
         r_iso = utc_iso(reception_utc)
         v_json = json.dumps(value) if value is not None else None
         m_json = json.dumps(metadata) if metadata else None
