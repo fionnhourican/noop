@@ -16,11 +16,13 @@ function formatHoursMinutes(totalSeconds?: number): string {
 export const SleepBreakdown: React.FC<SleepBreakdownProps> = ({ sleep }) => {
   if (!sleep) {
     return (
-      <div className="bg-noop-card border border-noop-border rounded-2xl p-6 flex flex-col items-center justify-center min-h-[320px] text-center">
-        <Moon className="w-10 h-10 text-noop-subtle mb-3 animate-pulse" />
+      <div className="glass-card rounded-2xl p-6 flex flex-col items-center justify-center min-h-[340px] text-center relative overflow-hidden">
+        <div className="w-16 h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-3 shadow-inner">
+          <Moon className="w-8 h-8 text-noop-subtle animate-pulse" />
+        </div>
         <h3 className="text-base font-semibold text-white">No Sleep Session Recorded</h3>
-        <p className="text-xs text-noop-subtle mt-1 max-w-xs">
-          Sleep sessions and stages will automatically sync once your nocturnal rest concludes.
+        <p className="text-xs text-noop-subtle mt-1.5 max-w-xs leading-relaxed">
+          Sleep stages (Deep, REM, Light, Awake) will automatically sync once your nocturnal rest concludes.
         </p>
       </div>
     );
@@ -41,7 +43,10 @@ export const SleepBreakdown: React.FC<SleepBreakdownProps> = ({ sleep }) => {
   const endTimeStr = new Date(sleep.end_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   return (
-    <div className="bg-noop-card border border-noop-border hover:border-noop-border/80 transition-all rounded-2xl p-6 flex flex-col justify-between">
+    <div className="glass-card glass-card-hover rounded-2xl p-6 flex flex-col justify-between relative overflow-hidden group">
+      {/* Corner indigo ambient glow */}
+      <div className="absolute -top-10 -right-10 w-36 h-36 rounded-full bg-noop-indigo/15 blur-3xl pointer-events-none" />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -49,11 +54,11 @@ export const SleepBreakdown: React.FC<SleepBreakdownProps> = ({ sleep }) => {
             <Moon className="w-3.5 h-3.5 text-noop-indigo" />
             Sleep Performance
           </span>
-          <h2 className="text-sm font-semibold text-white">Sleep Architecture</h2>
+          <h2 className="text-sm font-semibold text-white tracking-tight">Sleep Architecture</h2>
         </div>
 
         {sleep.sleep_efficiency !== undefined && sleep.sleep_efficiency !== null && (
-          <div className="px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-noop-indigo/10 border border-noop-indigo/30 text-noop-indigo">
+          <div className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-noop-indigo/15 border border-noop-indigo/30 text-noop-indigo shadow-inner">
             {Math.round(sleep.sleep_efficiency)}% Efficiency
           </div>
         )}
@@ -61,24 +66,24 @@ export const SleepBreakdown: React.FC<SleepBreakdownProps> = ({ sleep }) => {
 
       {/* Main Sleep Duration Readout */}
       <div className="my-5">
-        <div className="flex items-baseline gap-2 mb-1">
-          <span className="text-4xl font-extrabold text-white tracking-tight">
+        <div className="flex items-baseline gap-2.5 mb-1.5">
+          <span className="text-5xl font-black text-white tracking-tight tabular-nums font-mono drop-shadow-md">
             {formatHoursMinutes(sleep.duration_seconds)}
           </span>
-          <span className="text-xs text-noop-subtle">total sleep</span>
+          <span className="text-xs font-semibold text-noop-subtle uppercase tracking-wider">Total Sleep</span>
         </div>
 
-        <div className="flex items-center gap-4 text-xs text-noop-muted">
-          <span className="flex items-center gap-1">
+        <div className="flex items-center gap-4 text-xs text-noop-muted font-mono">
+          <span className="flex items-center gap-1.5">
             <Moon className="w-3.5 h-3.5 text-noop-subtle" /> Bed: {startTimeStr}
           </span>
-          <span className="flex items-center gap-1">
+          <span className="flex items-center gap-1.5">
             <Sun className="w-3.5 h-3.5 text-noop-yellow" /> Wake: {endTimeStr}
           </span>
         </div>
 
         {/* Segmented Stages Progress Bar */}
-        <div className="w-full h-3.5 bg-noop-bg rounded-full p-0.5 border border-noop-border/80 flex overflow-hidden mt-4">
+        <div className="w-full h-4 bg-noop-bg/90 rounded-full p-0.5 border border-white/10 flex overflow-hidden mt-4 shadow-inner">
           <div
             title={`Deep: ${deepPct}%`}
             style={{ width: `${deepPct}%` }}
@@ -103,41 +108,41 @@ export const SleepBreakdown: React.FC<SleepBreakdownProps> = ({ sleep }) => {
       </div>
 
       {/* Stage Breakdown Grid */}
-      <div className="grid grid-cols-4 gap-2 pt-3 border-t border-noop-border/60 text-center">
-        <div className="bg-noop-bg/60 border border-noop-border/40 rounded-xl p-2">
-          <div className="flex items-center justify-center gap-1 text-[10px] text-noop-indigo font-semibold uppercase mb-0.5">
+      <div className="grid grid-cols-4 gap-2.5 pt-3 border-t border-white/10 text-center">
+        <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 shadow-inner">
+          <div className="flex items-center justify-center gap-1 text-[10px] text-noop-indigo font-bold uppercase mb-0.5">
             <Sparkles className="w-3 h-3" />
             <span>Deep</span>
           </div>
-          <div className="text-xs font-bold text-white">{formatHoursMinutes(deepSec)}</div>
-          <div className="text-[10px] text-noop-subtle">{deepPct}%</div>
+          <div className="text-xs font-extrabold text-white tabular-nums font-mono">{formatHoursMinutes(deepSec)}</div>
+          <div className="text-[10px] text-noop-subtle tabular-nums font-mono">{deepPct}%</div>
         </div>
 
-        <div className="bg-noop-bg/60 border border-noop-border/40 rounded-xl p-2">
-          <div className="flex items-center justify-center gap-1 text-[10px] text-noop-cyan font-semibold uppercase mb-0.5">
+        <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 shadow-inner">
+          <div className="flex items-center justify-center gap-1 text-[10px] text-noop-cyan font-bold uppercase mb-0.5">
             <Zap className="w-3 h-3" />
             <span>REM</span>
           </div>
-          <div className="text-xs font-bold text-white">{formatHoursMinutes(remSec)}</div>
-          <div className="text-[10px] text-noop-subtle">{remPct}%</div>
+          <div className="text-xs font-extrabold text-white tabular-nums font-mono">{formatHoursMinutes(remSec)}</div>
+          <div className="text-[10px] text-noop-subtle tabular-nums font-mono">{remPct}%</div>
         </div>
 
-        <div className="bg-noop-bg/60 border border-noop-border/40 rounded-xl p-2">
-          <div className="flex items-center justify-center gap-1 text-[10px] text-noop-blue font-semibold uppercase mb-0.5">
+        <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 shadow-inner">
+          <div className="flex items-center justify-center gap-1 text-[10px] text-noop-blue font-bold uppercase mb-0.5">
             <Moon className="w-3 h-3" />
             <span>Light</span>
           </div>
-          <div className="text-xs font-bold text-white">{formatHoursMinutes(lightSec)}</div>
-          <div className="text-[10px] text-noop-subtle">{lightPct}%</div>
+          <div className="text-xs font-extrabold text-white tabular-nums font-mono">{formatHoursMinutes(lightSec)}</div>
+          <div className="text-[10px] text-noop-subtle tabular-nums font-mono">{lightPct}%</div>
         </div>
 
-        <div className="bg-noop-bg/60 border border-noop-border/40 rounded-xl p-2">
-          <div className="flex items-center justify-center gap-1 text-[10px] text-rose-400 font-semibold uppercase mb-0.5">
+        <div className="bg-white/5 border border-white/10 rounded-xl p-2.5 shadow-inner">
+          <div className="flex items-center justify-center gap-1 text-[10px] text-rose-400 font-bold uppercase mb-0.5">
             <Clock className="w-3 h-3" />
             <span>Awake</span>
           </div>
-          <div className="text-xs font-bold text-white">{formatHoursMinutes(awakeSec)}</div>
-          <div className="text-[10px] text-noop-subtle">{awakePct}%</div>
+          <div className="text-xs font-extrabold text-white tabular-nums font-mono">{formatHoursMinutes(awakeSec)}</div>
+          <div className="text-[10px] text-noop-subtle tabular-nums font-mono">{awakePct}%</div>
         </div>
       </div>
     </div>

@@ -7,6 +7,32 @@
     @apply bg-noop-bg text-noop-text selection:bg-noop-cyan/20 selection:text-noop-cyan;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
+
+  /* Monospace tabular numbers to eliminate number-jitter */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* Liquid Metal Frosted Glass Material */
+  .glass-card {
+    background: rgba(18, 21, 30, 0.75);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.06), 0 12px 30px -10px rgba(0, 0, 0, 0.5);
+  }
+
+  .glass-card-hover {
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .glass-card-hover:hover {
+    background: rgba(22, 26, 38, 0.85);
+    border-color: rgba(255, 255, 255, 0.14);
+    transform: translateY(-2px);
+    box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.1), 0 16px 36px -8px rgba(0, 0, 0, 0.6);
+  }
 }
 
 /* Custom scrollbar for dark dashboard */
@@ -15,12 +41,20 @@
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #090a0f;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: #1f2433;
-  border-radius: 3px;
+  border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #2d344a;
+}
+
+/* Mobile Safe Areas */
+.pb-safe {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+.pt-safe {
+  padding-top: max(1rem, env(safe-area-inset-top));
 }

@@ -12,6 +12,7 @@ RUN npm install
 # Copy source and config
 COPY tsconfig.json tsconfig.node.json vite.config.ts tailwind.config.js postcss.config.js index.html ./
 COPY src ./src
+COPY public ./public
 
 # Build production assets
 RUN npm run build
