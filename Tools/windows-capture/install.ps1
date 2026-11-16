@@ -1,4 +1,4 @@
-# ==============================================================================
+﻿# ==============================================================================
 # NOOP Windows Collector — Automatic Startup Installer
 # Creates a Task Scheduler job running under the user's interactive session at logon.
 # ==============================================================================
@@ -63,9 +63,13 @@ if ($IngestionToken) {
     Write-Host "Credentials secured under target: NOOP_HomeLab_Ingestion" -ForegroundColor Green
 }
 
-# 4. Copy default configuration if not present
+# 4. Copy configuration
 $ConfigFile = Join-Path $AppDataNoop "config.yaml"
-if (-not (Test-Path $ConfigFile)) {
+$LocalConfig = Join-Path $ScriptDir "config.yaml"
+if (Test-Path $LocalConfig) {
+    Copy-Item -Path $LocalConfig -Destination $ConfigFile -Force
+    Write-Host "Copied existing config to $ConfigFile" -ForegroundColor Green
+} elseif (-not (Test-Path $ConfigFile)) {
     $DefaultConfig = Join-Path $ScriptDir "config.example.yaml"
     if (Test-Path $DefaultConfig) {
         Copy-Item -Path $DefaultConfig -Destination $ConfigFile
