@@ -53,7 +53,7 @@ try {
     Set-Acl -Path $AppDataNoop -AclObject $Acl
     Write-Host "Secured $AppDataNoop permissions to current user only." -ForegroundColor Green
 } catch {
-    Write-Warning "Could not tighten ACL on $AppDataNoop: $_"
+    Write-Warning "Could not tighten ACL on $($AppDataNoop): $_"
 }
 
 # 3. Store API credentials securely in Windows Credential Manager
@@ -91,5 +91,8 @@ Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Silent
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description "NOOP Home Lab Windows 11 WHOOP 4.0 BLE Collector" | Out-Null
 
 Write-Host "Successfully registered scheduled task '$TaskName'." -ForegroundColor Green
-Write-Host "The collector will start automatically when you log on, or run now with:" -ForegroundColor Cyan
-Write-Host "Start-ScheduledTask -TaskName $TaskName" -ForegroundColor White
+try {
+    Start-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    Write-Host "Started background collector service ($TaskName)." -ForegroundColor Green
+} catch {}
+Write-Host "The collector is now running in the background and will start automatically at logon." -ForegroundColor Cyan
