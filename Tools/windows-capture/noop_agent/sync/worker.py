@@ -31,6 +31,7 @@ class SyncWorker:
             server_url=config.server.url,
             token=token,
             timeout_seconds=15.0,
+            verify_ssl=config.server.verify_ssl,
         )
         self.backoff = BackoffManager(
             base_delay=2.0,

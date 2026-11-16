@@ -15,6 +15,7 @@ server:
   token: "2d45beb9d3ec3705c2868f44fddee03192772f99d146bf777cd3d338ad2e7439"
   sync_interval_seconds: 30
   batch_size: 100
+  verify_ssl: false
 
 # Bluetooth LE Collection Settings
 ble:

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import ssl
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from urllib.error import HTTPError, URLError
@@ -42,6 +43,7 @@ class BatchUploader:
         server_url: str,
         token: Optional[str] = None,
         timeout_seconds: float = 15.0,
+        verify_ssl: bool = True,
     ):
         clean_url = server_url.rstrip("/")
         if not clean_url.endswith("/ingest/batches"):
@@ -54,6 +56,7 @@ class BatchUploader:
 
         self.token = token
         self.timeout_seconds = timeout_seconds
+        self.verify_ssl = verify_ssl
 
     def _build_request_payload(
         self,
@@ -127,8 +130,19 @@ class BatchUploader:
             method="POST",
         )
 
+        ctx = ssl.create_default_context()
+        if not self.verify_ssl:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        else:
+            try:
+                import certifi
+                ctx.load_verify_locations(certifi.where())
+            except Exception:
+                pass
+
         try:
-            with urlopen(req, timeout=self.timeout_seconds) as resp:
+            with urlopen(req, timeout=self.timeout_seconds, context=ctx) as resp:
                 status_code = resp.status
                 resp_bytes = resp.read()
                 try:

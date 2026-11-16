@@ -54,6 +54,7 @@ class ServerConfig:
     token: Optional[str] = None
     sync_interval_seconds: int = 30
     batch_size: int = 100
+    verify_ssl: bool = True
 
 
 @dataclass
@@ -146,6 +147,7 @@ class AgentConfig:
                 token=srv_data.get("token"),
                 sync_interval_seconds=srv_data.get("sync_interval_seconds", 30),
                 batch_size=srv_data.get("batch_size", 100),
+                verify_ssl=srv_data.get("verify_ssl", True),
             ),
             ble=BleConfig(
                 scan_timeout=ble_data.get("scan_timeout", 10.0),
