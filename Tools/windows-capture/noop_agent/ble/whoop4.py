@@ -1,21 +1,32 @@
-"""WHOOP 4.0 device orchestrator and live stream manager."""
+"""WHOOP 4.0 device orchestrator, live streaming, and persist-before-ack historical offload."""
 
 import asyncio
+import datetime
 import logging
-from typing import Any, Callable, Optional
+from typing import Any, Callable, List, Optional, Tuple
 
 from noop_agent.ble.characteristics import (
     CMD_GET_BATTERY_LEVEL,
+    CMD_SEND_HISTORICAL_DATA,
     CMD_SEND_R10_R11_REALTIME,
     CMD_TOGGLE_REALTIME_HR,
     DEVINFO_FIRMWARE_REV_UUID,
     DEVINFO_HARDWARE_REV_UUID,
     DEVINFO_MODEL_NUMBER_UUID,
     DEVINFO_SERIAL_NUMBER_UUID,
+    META_HISTORY_COMPLETE,
+    META_HISTORY_END,
+    META_HISTORY_START,
+    PACKET_HISTORICAL_DATA,
+    PACKET_METADATA,
     WHOOP4_CMD_WRITE_UUID,
 )
 from noop_agent.ble.connection import BleConnectionManager
-from noop_agent.ble.framing import build_command_frame
+from noop_agent.ble.framing import (
+    build_command_frame,
+    build_history_ack_whoop4,
+    history_end_data_whoop4,
+)
 from noop_agent.ble.notifications import NotificationDispatcher
 from noop_agent.ble.scanner import WhoopScanner
 from noop_agent.protocol.decoder import Whoop4Decoder
@@ -25,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 class Whoop4Device:
-    """Manages the full connection, initialization, live streaming, and decoding loop for WHOOP 4.0."""
+    """Manages the full connection, initialization, live streaming, and historical offload loop for WHOOP 4.0."""
 
     def __init__(
         self,
@@ -35,6 +46,7 @@ class Whoop4Device:
         on_record: Optional[Callable[[ObservationProvenance], None]] = None,
         on_raw_frame: Optional[Callable[[str, bytes, str], Optional[int]]] = None,
         on_state_change: Optional[Callable[[str, Optional[str]], None]] = None,
+        on_chunk_commit: Optional[Callable[[str, List[ObservationProvenance], List[Tuple[bytes, str]], str], None]] = None,
     ):
         self.target_address = target_address
         self.scan_timeout = scan_timeout
@@ -43,6 +55,7 @@ class Whoop4Device:
         self.on_record = on_record
         self.on_raw_frame = on_raw_frame
         self.on_state_change = on_state_change
+        self.on_chunk_commit = on_chunk_commit
 
         self.scanner = WhoopScanner(target_address, scan_timeout)
         self.conn = BleConnectionManager(
@@ -59,7 +72,13 @@ class Whoop4Device:
         self.device_info: Optional[DeviceInfo] = None
         self._seq = 1
         self._keepalive_task: Optional[asyncio.Task] = None
+        self._offload_task: Optional[asyncio.Task] = None
         self._is_collecting = False
+        self._offload_in_progress = False
+
+        # Historical offload chunk staging buffer (Persist-before-ACK)
+        self._chunk_records: List[ObservationProvenance] = []
+        self._chunk_frames: List[Tuple[bytes, str]] = []
 
     def _notify_state(self, state: str, detail: Optional[str] = None):
         if self.on_state_change:
@@ -72,15 +91,20 @@ class Whoop4Device:
 
     def _on_ble_disconnected(self, _client):
         self._is_collecting = False
+        self._offload_in_progress = False
         if self._keepalive_task:
             self._keepalive_task.cancel()
             self._keepalive_task = None
+        if self._offload_task:
+            self._offload_task.cancel()
+            self._offload_task = None
+        self._chunk_records.clear()
+        self._chunk_frames.clear()
         self._notify_state("disconnected", "Link dropped")
 
     def _on_sig_hr(self, bpm: int, rr_list):
         """Handle standard Bluetooth SIG heart rate measurement."""
         device_id = self.device_info.address if self.device_info else "whoop4"
-        import datetime
         now = datetime.datetime.now(datetime.timezone.utc)
 
         rec = ObservationProvenance(
@@ -100,7 +124,6 @@ class Whoop4Device:
     def _on_sig_battery(self, level_pct: int):
         """Handle standard Bluetooth SIG battery level notification."""
         device_id = self.device_info.address if self.device_info else "whoop4"
-        import datetime
         now = datetime.datetime.now(datetime.timezone.utc)
 
         rec = ObservationProvenance(
@@ -120,8 +143,59 @@ class Whoop4Device:
     def _on_reassembled_frame(self, char_uuid: str, frame_bytes: bytes):
         """Handle complete reassembled frame from proprietary WHOOP 4.0 notify channel."""
         device_id = self.device_info.address if self.device_info else "whoop4"
+        inner_type = frame_bytes[4] if len(frame_bytes) > 4 else None
 
-        # Persist raw frame reference if callback provided
+        # Check for historical offload stream frames
+        if inner_type == PACKET_HISTORICAL_DATA:
+            self._chunk_frames.append((frame_bytes, char_uuid))
+            records = self.decoder.decode_frame(frame=frame_bytes, device_id=device_id)
+            self._chunk_records.extend(records)
+            return
+
+        elif inner_type == PACKET_METADATA and len(frame_bytes) > 6:
+            meta_type = frame_bytes[6]
+            if meta_type == META_HISTORY_START:
+                logger.info("Historical offload chunk stream started.")
+                self._chunk_records.clear()
+                self._chunk_frames.clear()
+                return
+
+            elif meta_type == META_HISTORY_END:
+                logger.info("Historical chunk stream ended. Validating and executing persist-before-ack...")
+                end_data = history_end_data_whoop4(frame_bytes)
+                if end_data:
+                    # 1. Commit chunk durably to SQLite BEFORE acknowledging
+                    trim_cursor_hex = end_data.hex()
+                    if self.on_chunk_commit:
+                        try:
+                            self.on_chunk_commit(
+                                device_id,
+                                list(self._chunk_records),
+                                list(self._chunk_frames),
+                                trim_cursor_hex,
+                            )
+                        except Exception as e:
+                            logger.error("Persist-before-ack commit failed: %s. ACK suppressed to prevent data loss.", e)
+                            return
+
+                    # 2. Transmit confirmed ACK to advance strap trim cursor
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self._send_history_ack(end_data))
+                    except RuntimeError:
+                        asyncio.run(self._send_history_ack(end_data))
+                    self._chunk_records.clear()
+                    self._chunk_frames.clear()
+                else:
+                    logger.warning("Corrupt or invalid HISTORY_END frame received. Suppressing ACK.")
+                return
+
+            elif meta_type == META_HISTORY_COMPLETE:
+                logger.info("Historical offload complete: on-device storage fully drained.")
+                self._offload_in_progress = False
+                return
+
+        # Normal live frame processing
         raw_frame_id = None
         if self.on_raw_frame:
             try:
@@ -129,7 +203,6 @@ class Whoop4Device:
             except Exception as e:
                 logger.error("Failed to persist raw frame: %s", e)
 
-        # Decode frame into normalized records
         records = self.decoder.decode_frame(
             frame=frame_bytes,
             device_id=device_id,
@@ -139,6 +212,16 @@ class Whoop4Device:
         for rec in records:
             if self.on_record:
                 self.on_record(rec)
+
+    async def _send_history_ack(self, end_data: bytes) -> None:
+        """Send HISTORICAL_DATA_RESULT (23) confirmed ACK to advance the strap's trim cursor."""
+        seq = self._next_seq()
+        ack_frame = build_history_ack_whoop4(end_data, seq=seq)
+        ok = await self.conn.write_gatt_char(WHOOP4_CMD_WRITE_UUID, ack_frame, response=True)
+        if ok:
+            logger.info("Historical trim ACK confirmed (trim=%s). Strap cursor advanced.", end_data.hex())
+        else:
+            logger.error("Failed to write confirmed historical trim ACK.")
 
     async def _read_device_metadata(self, address: str, name: Optional[str]) -> DeviceInfo:
         """Read standard Device Information Service strings."""
@@ -173,12 +256,31 @@ class Whoop4Device:
         frame = build_command_frame(cmd, seq=seq, payload=payload)
         return await self.conn.write_gatt_char(WHOOP4_CMD_WRITE_UUID, frame, response=response)
 
+    async def trigger_historical_offload(self) -> bool:
+        """Request historical offload stream from the strap (non-blocking)."""
+        if not self.conn.is_connected:
+            logger.warning("Cannot trigger offload: BLE is not connected.")
+            return False
+
+        if self._offload_in_progress:
+            logger.info("Historical offload is already in progress.")
+            return True
+
+        self._offload_in_progress = True
+        logger.info("Sending confirmed SEND_HISTORICAL_DATA (22) command...")
+        ok = await self.write_command(CMD_SEND_HISTORICAL_DATA, payload=b"\x00", response=True)
+        if not ok:
+            self._offload_in_progress = False
+            logger.error("Failed to initiate historical offload command.")
+            return False
+
+        logger.info("Historical offload initiated successfully.")
+        return True
+
     async def _arm_realtime_stream(self) -> None:
         """Activate the live HR + R-R interval stream."""
         logger.info("Arming realtime sensor stream (SEND_R10_R11_REALTIME + TOGGLE_REALTIME_HR)...")
-        # 1. Arm R10/R11 realtime stream
         await self.write_command(CMD_SEND_R10_R11_REALTIME, payload=b"\x01", response=False)
-        # 2. Toggle realtime heart rate streaming
         await self.write_command(CMD_TOGGLE_REALTIME_HR, payload=b"\x01", response=False)
 
     async def _keepalive_loop(self) -> None:
@@ -191,6 +293,17 @@ class Whoop4Device:
                 await self._arm_realtime_stream()
             except Exception as e:
                 logger.warning("Keepalive re-arm failed: %s", e)
+
+    async def _periodic_offload_loop(self) -> None:
+        """Periodically trigger historical offload draining (e.g. every 5 minutes)."""
+        while self._is_collecting and self.conn.is_connected:
+            await asyncio.sleep(300.0)
+            if not self._is_collecting or not self.conn.is_connected:
+                break
+            try:
+                await self.trigger_historical_offload()
+            except Exception as e:
+                logger.warning("Periodic offload trigger failed: %s", e)
 
     async def connect_and_stream(self) -> bool:
         """Find strap, connect, subscribe to notifications, and begin live collection."""
@@ -212,26 +325,36 @@ class Whoop4Device:
         # Subscribe notifications
         await self.dispatcher.subscribe_all(self.conn.client)
 
-        # Benign handshake query: request battery level to confirm responsiveness & trigger bonding
+        # Benign handshake query
         await self.write_command(CMD_GET_BATTERY_LEVEL, payload=b"\x00", response=False)
         await asyncio.sleep(0.5)
 
         # Arm realtime stream
         await self._arm_realtime_stream()
 
+        # Trigger initial historical offload to catch up on stored data
+        await asyncio.sleep(1.0)
+        await self.trigger_historical_offload()
+
         self._is_collecting = True
         self._notify_state("connected", "Live stream active")
 
-        # Start periodic keepalive re-arm
+        # Start background loops
         self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+        self._offload_task = asyncio.create_task(self._periodic_offload_loop())
         return True
 
     async def stop(self) -> None:
-        """Stop streaming, cancel keepalive, and disconnect."""
+        """Stop streaming, cancel background tasks, and disconnect."""
         self._is_collecting = False
+        self._offload_in_progress = False
+
         if self._keepalive_task:
             self._keepalive_task.cancel()
             self._keepalive_task = None
+        if self._offload_task:
+            self._offload_task.cancel()
+            self._offload_task = None
 
         if self.conn.client:
             await self.dispatcher.unsubscribe_all(self.conn.client)

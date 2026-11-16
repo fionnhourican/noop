@@ -7,13 +7,14 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from noop_agent.ble.whoop4 import Whoop4Device
 from noop_agent.config import AgentConfig
 from noop_agent.protocol.models import ObservationProvenance
 from noop_agent.storage.local_db import LocalDatabase
 from noop_agent.storage.queue import DurableQueue
+from noop_agent.sync.worker import SyncWorker
 from noop_agent.tray.application import TrayApp
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,13 @@ class AgentSupervisor:
         self.db = LocalDatabase(config.db_path)
         self.queue = DurableQueue(self.db)
 
+        # Sync Subsystem (HTTP uploader to Home Lab server)
+        self.sync_worker = SyncWorker(
+            config=config,
+            queue=self.queue,
+            on_status_change=self._on_sync_status_change,
+        )
+
         # Tray subsystem
         self.tray: Optional[TrayApp] = None
         self.tray_thread: Optional[threading.Thread] = None
@@ -104,6 +112,7 @@ class AgentSupervisor:
             auto_pair=config.ble.auto_pair,
             on_record=self._on_live_record_received,
             on_raw_frame=self._on_raw_frame_received,
+            on_chunk_commit=self._on_historical_chunk_commit,
             on_state_change=self.set_state,
         )
 
@@ -114,8 +123,18 @@ class AgentSupervisor:
         self.latest_hr: Optional[int] = None
         self.latest_battery: Optional[float] = None
 
+    def _on_sync_status_change(self, state: str, detail: Optional[str] = None) -> None:
+        """Handle status notifications from the sync worker."""
+        if state == "synced":
+            self.last_sync_time = self.sync_worker.last_sync_time
+        if self.tray and detail:
+            # Only update tray detail if not overriding active live HR
+            if self.current_state != "connected":
+                self.tray.update_state(self.current_state, detail)
+
     def _on_tray_sync_now(self) -> None:
         logger.info("Manual sync triggered from system tray.")
+        self.sync_worker.trigger_sync()
 
     def _on_tray_toggle_pause(self) -> None:
         self.is_paused = not self.is_paused
@@ -142,6 +161,64 @@ class AgentSupervisor:
             char_uuid=char_uuid,
             inner_type=inner_type,
         )
+
+    def _on_historical_chunk_commit(
+        self,
+        device_id: str,
+        records: List[ObservationProvenance],
+        frames: List[Tuple[bytes, str]],
+        trim_cursor_hex: str,
+    ) -> None:
+        """Atomic persist-before-ack handler for historical offload chunks.
+
+        Guarantees:
+        - Commits all raw BLE frames immutably to SQLite.
+        - Commits all decoded historical records to SQLite with data_origin='historical'.
+        - Updates persistent sync_state with the strap's latest trim cursor.
+        - If any database operation fails, an exception is raised which prevents
+          the confirmed trim ACK from being sent to the strap.
+        """
+        logger.info(
+            "Persist-before-ack: committing %d records and %d raw frames (cursor=%s)...",
+            len(records),
+            len(frames),
+            trim_cursor_hex,
+        )
+
+        # 1. Enqueue raw frames and map frame bytes to frame DB IDs
+        for frame_bytes, char_uuid in frames:
+            inner_type = frame_bytes[4] if len(frame_bytes) > 4 else None
+            self.queue.enqueue_raw_frame(
+                device_id=device_id,
+                frame_bytes=frame_bytes,
+                char_uuid=char_uuid,
+                inner_type=inner_type,
+            )
+
+        # 2. Enqueue all historical observation records
+        for rec in records:
+            self.queue.enqueue_record(
+                device_id=rec.device_id,
+                record_type=rec.record_type,
+                timestamp=rec.timestamp_utc,
+                reception_timestamp=rec.reception_utc,
+                raw_frame_id=rec.raw_frame_id,
+                protocol_version=rec.protocol_version,
+                decoder_version=rec.decoder_version,
+                data_origin="historical",
+                validation_status=rec.validation_status,
+                value=rec.value,
+                unit=rec.unit,
+                source="historical",
+                metadata=rec.metadata,
+            )
+
+        # 3. Persist latest trim cursor in sync_state table
+        self.queue.set_sync_state(device_id, "last_trim_cursor", trim_cursor_hex)
+        logger.info("Persist-before-ack complete. Safe to acknowledge strap.")
+
+        # Expedite sync worker to upload new historical data
+        self.sync_worker.trigger_sync()
 
     def _on_live_record_received(self, record: ObservationProvenance) -> None:
         """Thread-safe enqueue into bounded live pipeline with explicit backpressure."""
@@ -272,6 +349,7 @@ class AgentSupervisor:
         live_worker_task = asyncio.create_task(self._live_pipeline_worker())
         ble_task = asyncio.create_task(self._ble_lifecycle_supervisor())
         monitor_task = asyncio.create_task(self._health_monitor_loop())
+        self.sync_worker.start()
 
         try:
             await self.stop_event.wait()
@@ -280,12 +358,14 @@ class AgentSupervisor:
             ble_task.cancel()
             live_worker_task.cancel()
             monitor_task.cancel()
+            await self.sync_worker.stop()
             await self.shutdown()
 
     async def shutdown(self) -> None:
         """Gracefully terminate subsystems and flush queues."""
         logger.info("Shutting down NOOP Agent Supervisor...")
         self.set_state("offline")
+        await self.sync_worker.stop()
         await self.device.stop()
         if self.tray:
             self.tray.stop()
