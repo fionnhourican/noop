@@ -7,6 +7,8 @@ from sqlalchemy import engine_from_config, pool
 
 # Add api directory to sys.path so app can be imported
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "api"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path.cwd()))
 
 from app.config import settings
 from app.database import Base

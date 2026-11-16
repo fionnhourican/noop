@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: noop_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-noop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_postgres_password}
+      POSTGRES_DB: ${POSTGRES_DB:-noop_homelab}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-noop} -d ${POSTGRES_DB:-noop_homelab}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - noop_network
+
+  api:
+    image: ghcr.io/fionnhourican/noop-homelab-api:latest
+    container_name: noop_api
+    restart: unless-stopped
+    environment:
+      POSTGRES_SERVER: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-noop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_postgres_password}
+      POSTGRES_DB: ${POSTGRES_DB:-noop_homelab}
+      INGESTION_TOKEN: ${INGESTION_TOKEN:-changeme_ingestion_bearer_token_min_32_chars}
+      DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:-changeme_dashboard_session_token}
+      ENVIRONMENT: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - noop_network
+
+  frontend:
+    image: ghcr.io/fionnhourican/noop-homelab-frontend:latest
+    container_name: noop_frontend
+    restart: unless-stopped
+    ports:
+      # Bind strictly to localhost on the host. Tailscale Serve exposes this securely.
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - api
+    networks:
+      - noop_network
+
+volumes:
+  postgres_data:
+    name: noop_postgres_data
+
+networks:
+  noop_network:
+    name: noop_internal_network

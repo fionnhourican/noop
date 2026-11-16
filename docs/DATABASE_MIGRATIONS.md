@@ -7,7 +7,7 @@ NOOP Home Lab manages PostgreSQL schema evolution via [Alembic](https://alembic.
 ## 1. Structure
 
 ```
-homelab/
+homelab/api/
 |-- migrations/
 |   |-- alembic.ini             # Alembic configuration
 |   |-- env.py                  # Migration runner environment
@@ -20,15 +20,19 @@ homelab/
 
 ## 2. Applying Migrations
 
-### Running Migrations in Docker
+### Automatic Migration on Startup (Production)
 
-To apply all pending migrations against the live database:
+In production containers, Alembic migrations are executed automatically on startup by `/app/entrypoint.sh` before the FastAPI web server initializes.
+
+### Running Migrations in Docker (Manual)
+
+To manually apply all pending migrations against the live database:
 
 ```bash
-docker compose exec api alembic -c /app/../migrations/alembic.ini upgrade head
+docker compose exec api alembic -c /app/migrations/alembic.ini upgrade head
 ```
 
-Or from within the `homelab/` directory with Python installed:
+Or from within the `homelab/api/` directory with Python installed:
 
 ```bash
 alembic -c migrations/alembic.ini upgrade head
@@ -41,10 +45,10 @@ alembic -c migrations/alembic.ini upgrade head
 To generate a new auto-detected migration after updating models in `homelab/api/app/models/`:
 
 ```bash
-docker compose exec api alembic -c /app/../migrations/alembic.ini revision --autogenerate -m "describe_change"
+docker compose exec api alembic -c /app/migrations/alembic.ini revision --autogenerate -m "describe_change"
 ```
 
-Inspect the generated migration file under `homelab/migrations/versions/` before applying.
+Inspect the generated migration file under `homelab/api/migrations/versions/` before applying.
 
 ---
 
@@ -53,13 +57,13 @@ Inspect the generated migration file under `homelab/migrations/versions/` before
 To roll back the last migration:
 
 ```bash
-docker compose exec api alembic -c /app/../migrations/alembic.ini downgrade -1
+docker compose exec api alembic -c /app/migrations/alembic.ini downgrade -1
 ```
 
 To roll back all migrations to base:
 
 ```bash
-docker compose exec api alembic -c /app/../migrations/alembic.ini downgrade base
+docker compose exec api alembic -c /app/migrations/alembic.ini downgrade base
 ```
 
 ---

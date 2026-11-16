@@ -19,6 +19,7 @@ services:
       - noop_network
 
   api:
+    image: ${API_IMAGE:-ghcr.io/fionnhourican/noop-homelab-api:latest}
     build:
       context: ./api
       dockerfile: Dockerfile
@@ -40,6 +41,7 @@ services:
       - noop_network
 
   frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/fionnhourican/noop-homelab-frontend:latest}
     build:
       context: ./frontend
       dockerfile: Dockerfile
