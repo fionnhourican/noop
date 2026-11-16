@@ -1,0 +1,28 @@
+# ==============================================================================
+# NOOP Windows Collector Configuration
+# ==============================================================================
+
+# Device Configuration
+device:
+  # Leave null to automatically discover your pulsing WHOOP 4.0:
+  address: null
+  name: "WHOOP 4.0"
+  model: "whoop4"
+
+# Home Server Synchronization
+server:
+  url: "https://acer-homelab.tail614bb9.ts.net/api/v1"
+  token: "2d45beb9d3ec3705c2868f44fddee03192772f99d146bf777cd3d338ad2e7439"
+  sync_interval_seconds: 30
+  batch_size: 100
+
+# Bluetooth LE Collection Settings
+ble:
+  scan_timeout: 10.0
+  min_retry_delay: 2.0
+  max_retry_delay: 60.0
+  auto_pair: true
+
+# Logging Configuration
+logging:
+  level: "INFO"
