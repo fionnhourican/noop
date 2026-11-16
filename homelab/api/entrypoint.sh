@@ -17,7 +17,8 @@ try:
     with engine.connect() as conn:
         conn.execute(text('SELECT 1'))
     sys.exit(0)
-except Exception:
+except Exception as e:
+    print(f"Database connection attempt failed: {e}", file=sys.stderr)
     sys.exit(1)
 "; do
     counter=$((counter + 1))
