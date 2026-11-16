@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -48,17 +49,16 @@ async def ingest_batch(
     now_utc = datetime.now(timezone.utc)
 
     # 1. Ensure Device exists (upsert)
-    stmt = select(Device).where(Device.device_id == payload.device_id)
-    result = await db.execute(stmt)
-    device = result.scalar_one_or_none()
-    if not device:
-        device = Device(
+    device_stmt = (
+        pg_insert(Device)
+        .values(
             device_id=payload.device_id,
             name=f"WHOOP ({payload.device_id[-4:] if len(payload.device_id) >= 4 else payload.device_id})",
             model="whoop4",
         )
-        db.add(device)
-        await db.flush()
+        .on_conflict_do_nothing(index_elements=["device_id"])
+    )
+    await db.execute(device_stmt)
 
     # 2. Check if batch was already fully processed
     batch_stmt = select(SyncBatch).where(SyncBatch.batch_id == payload.batch_id)
@@ -69,7 +69,7 @@ async def ingest_batch(
             status="success",
             batch_id=payload.batch_id,
             accepted=0,
-            duplicates=payload.records.__len__(),
+            duplicates=len(payload.records),
             rejected=0,
             message="Batch previously processed",
         )
@@ -81,105 +81,128 @@ async def ingest_batch(
     # 3. Process records inside the session transaction
     for rec in payload.records:
         try:
-            # Check for existing record_id to ensure idempotency
-            rec_stmt = select(SourceRecord).where(SourceRecord.source_record_id == rec.record_id)
-            rec_res = await db.execute(rec_stmt)
-            if rec_res.scalar_one_or_none():
-                duplicates += 1
-                continue
-
-            # Store raw frame if provided
-            raw_frame_id = None
-            if rec.raw_frame_hex and rec.char_uuid:
-                frame_stmt = select(RawFrame).where(
-                    RawFrame.device_id == payload.device_id,
-                    RawFrame.frame_hex == rec.raw_frame_hex,
-                )
-                frame_res = await db.execute(frame_stmt)
-                existing_frame = frame_res.scalar_one_or_none()
-                if existing_frame:
-                    raw_frame_id = existing_frame.id
-                else:
-                    new_frame = RawFrame(
-                        device_id=payload.device_id,
-                        recv_ms=int((rec.reception_timestamp or rec.timestamp).timestamp() * 1000),
-                        char_uuid=rec.char_uuid,
-                        inner_type=rec.inner_type,
-                        frame_hex=rec.raw_frame_hex,
+            async with db.begin_nested():
+                # Store raw frame if provided
+                raw_frame_id = None
+                if rec.raw_frame_hex and rec.char_uuid:
+                    frame_stmt = (
+                        pg_insert(RawFrame)
+                        .values(
+                            device_id=payload.device_id,
+                            recv_ms=int((rec.reception_timestamp or rec.timestamp).timestamp() * 1000),
+                            char_uuid=rec.char_uuid,
+                            inner_type=rec.inner_type,
+                            frame_hex=rec.raw_frame_hex,
+                        )
+                        .on_conflict_do_nothing(index_elements=["device_id", "frame_hex"])
+                        .returning(RawFrame.id)
                     )
-                    db.add(new_frame)
-                    await db.flush()
-                    raw_frame_id = new_frame.id
+                    frame_res = await db.execute(frame_stmt)
+                    raw_frame_id = frame_res.scalar_one_or_none()
+                    if not raw_frame_id:
+                        sel = select(RawFrame.id).where(
+                            RawFrame.device_id == payload.device_id,
+                            RawFrame.frame_hex == rec.raw_frame_hex,
+                        )
+                        raw_frame_id = (await db.execute(sel)).scalar_one_or_none()
 
-            # Create provenance source record
-            source_rec = SourceRecord(
-                source_record_id=rec.record_id,
-                device_id=payload.device_id,
-                batch_id=payload.batch_id,
-                observation_timestamp=rec.timestamp,
-                reception_timestamp=rec.reception_timestamp or now_utc,
-                raw_source_frame_id=raw_frame_id,
-                protocol_version=rec.protocol_version,
-                decoder_version=rec.decoder_version,
-                record_type=rec.type,
-                data_origin=rec.data_origin,
-                validation_status=rec.validation_status,
-                raw_payload=rec.metadata or {},
-            )
-            db.add(source_rec)
-            await db.flush()
-
-            # Store typed normalized record
-            if rec.type == "heart_rate" and rec.value is not None:
-                hr_sample = HeartRateSample(
-                    source_record_id=rec.record_id,
-                    device_id=payload.device_id,
-                    timestamp=rec.timestamp,
-                    bpm=int(rec.value),
-                    source=rec.source or "whoop_ble",
+                # Create provenance source record (idempotent on source_record_id)
+                source_rec_stmt = (
+                    pg_insert(SourceRecord)
+                    .values(
+                        source_record_id=rec.record_id,
+                        device_id=payload.device_id,
+                        batch_id=payload.batch_id,
+                        observation_timestamp=rec.timestamp,
+                        reception_timestamp=rec.reception_timestamp or now_utc,
+                        raw_source_frame_id=raw_frame_id,
+                        protocol_version=rec.protocol_version,
+                        decoder_version=rec.decoder_version,
+                        record_type=rec.type,
+                        data_origin=rec.data_origin,
+                        validation_status=rec.validation_status,
+                        raw_payload=rec.metadata or {},
+                    )
+                    .on_conflict_do_nothing(index_elements=["source_record_id"])
+                    .returning(SourceRecord.id)
                 )
-                db.add(hr_sample)
+                src_res = await db.execute(source_rec_stmt)
+                if not src_res.scalar_one_or_none():
+                    duplicates += 1
+                    continue
 
-            elif rec.type == "biometric":
-                meta = rec.metadata or {}
-                bio_rec = BiometricRecord(
-                    source_record_id=rec.record_id,
-                    device_id=payload.device_id,
-                    timestamp=rec.timestamp,
-                    rr_count=meta.get("rr_count"),
-                    rr_mean_ms=meta.get("rr_mean_ms"),
-                    rmssd=meta.get("rmssd"),
-                    gravity_x=meta.get("gravity_x"),
-                    gravity_y=meta.get("gravity_y"),
-                    gravity_z=meta.get("gravity_z"),
-                    spo2_red=meta.get("spo2_red"),
-                    spo2_ir=meta.get("spo2_ir"),
-                    spo2_pct=meta.get("spo2_pct"),
-                    skin_temp_raw=meta.get("skin_temp_raw"),
-                    skin_temp_c=meta.get("skin_temp_c"),
-                    resp_rate_raw=meta.get("resp_rate_raw"),
-                    respiratory_rate=meta.get("respiratory_rate"),
-                    record_version=meta.get("record_version"),
-                )
-                db.add(bio_rec)
+                # Store typed normalized record
+                if rec.type == "heart_rate" and rec.value is not None:
+                    hr_stmt = (
+                        pg_insert(HeartRateSample)
+                        .values(
+                            source_record_id=rec.record_id,
+                            device_id=payload.device_id,
+                            timestamp=rec.timestamp,
+                            bpm=int(round(float(rec.value))),
+                            source=rec.source or "whoop_ble",
+                        )
+                        .on_conflict_do_nothing(index_elements=["device_id", "timestamp"])
+                    )
+                    await db.execute(hr_stmt)
 
-            elif rec.type == "collector_status":
-                meta = rec.metadata or {}
-                status_stmt = select(CollectorStatus).where(CollectorStatus.device_id == payload.device_id)
-                status_res = await db.execute(status_stmt)
-                col_status = status_res.scalar_one_or_none()
-                if not col_status:
-                    col_status = CollectorStatus(device_id=payload.device_id)
-                    db.add(col_status)
+                elif rec.type == "biometric":
+                    meta = rec.metadata or {}
+                    bio_stmt = (
+                        pg_insert(BiometricRecord)
+                        .values(
+                            source_record_id=rec.record_id,
+                            device_id=payload.device_id,
+                            timestamp=rec.timestamp,
+                            rr_count=meta.get("rr_count"),
+                            rr_mean_ms=meta.get("rr_mean_ms"),
+                            rmssd=meta.get("rmssd"),
+                            gravity_x=meta.get("gravity_x"),
+                            gravity_y=meta.get("gravity_y"),
+                            gravity_z=meta.get("gravity_z"),
+                            spo2_red=meta.get("spo2_red"),
+                            spo2_ir=meta.get("spo2_ir"),
+                            spo2_pct=meta.get("spo2_pct"),
+                            skin_temp_raw=meta.get("skin_temp_raw"),
+                            skin_temp_c=meta.get("skin_temp_c"),
+                            resp_rate_raw=meta.get("resp_rate_raw"),
+                            respiratory_rate=meta.get("respiratory_rate"),
+                            record_version=meta.get("record_version"),
+                        )
+                        .on_conflict_do_nothing(index_elements=["device_id", "timestamp"])
+                    )
+                    await db.execute(bio_stmt)
 
-                col_status.last_seen = rec.timestamp
-                col_status.connection_state = meta.get("connection_state", "connected")
-                col_status.battery_percentage = meta.get("battery_pct")
-                col_status.battery_millivolts = meta.get("battery_mV")
-                col_status.is_charging = meta.get("is_charging")
-                col_status.queued_records = meta.get("queued_records", 0)
-                col_status.last_sync_timestamp = now_utc
-                col_status.agent_version = rec.decoder_version
+                elif rec.type == "collector_status":
+                    meta = rec.metadata or {}
+                    col_stmt = (
+                        pg_insert(CollectorStatus)
+                        .values(
+                            device_id=payload.device_id,
+                            last_seen=rec.timestamp,
+                            connection_state=meta.get("connection_state", "connected"),
+                            battery_percentage=meta.get("battery_pct"),
+                            battery_millivolts=meta.get("battery_mV"),
+                            is_charging=meta.get("is_charging"),
+                            queued_records=meta.get("queued_records", 0),
+                            last_sync_timestamp=now_utc,
+                            agent_version=rec.decoder_version,
+                        )
+                        .on_conflict_do_update(
+                            index_elements=["device_id"],
+                            set_={
+                                "last_seen": rec.timestamp,
+                                "connection_state": meta.get("connection_state", "connected"),
+                                "battery_percentage": meta.get("battery_pct"),
+                                "battery_millivolts": meta.get("battery_mV"),
+                                "is_charging": meta.get("is_charging"),
+                                "queued_records": meta.get("queued_records", 0),
+                                "last_sync_timestamp": now_utc,
+                                "agent_version": rec.decoder_version,
+                            },
+                        )
+                    )
+                    await db.execute(col_stmt)
 
             accepted += 1
 
@@ -188,17 +211,21 @@ async def ingest_batch(
             rejected += 1
 
     # Record sync batch summary
-    sync_batch = SyncBatch(
-        batch_id=payload.batch_id,
-        device_id=payload.device_id,
-        schema_version=payload.schema_version,
-        records_count=len(payload.records),
-        accepted_count=accepted,
-        duplicate_count=duplicates,
-        rejected_count=rejected,
-        received_at=now_utc,
+    sync_batch_stmt = (
+        pg_insert(SyncBatch)
+        .values(
+            batch_id=payload.batch_id,
+            device_id=payload.device_id,
+            schema_version=payload.schema_version,
+            records_count=len(payload.records),
+            accepted_count=accepted,
+            duplicate_count=duplicates,
+            rejected_count=rejected,
+            received_at=now_utc,
+        )
+        .on_conflict_do_nothing(index_elements=["batch_id"])
     )
-    db.add(sync_batch)
+    await db.execute(sync_batch_stmt)
 
     # Commit all atomically
     await db.commit()

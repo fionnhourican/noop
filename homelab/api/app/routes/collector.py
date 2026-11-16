@@ -54,23 +54,37 @@ async def update_collector_status(
     _: str = Depends(get_current_ingestion_token),
 ) -> CollectorStatusResponse:
     """Update collector status from the Windows agent."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
     now_utc = datetime.now(timezone.utc)
-    stmt = select(CollectorStatus).where(CollectorStatus.device_id == payload.device_id)
-    result = await db.execute(stmt)
-    status_row = result.scalar_one_or_none()
-
-    if not status_row:
-        status_row = CollectorStatus(device_id=payload.device_id)
-        db.add(status_row)
-
-    status_row.last_seen = now_utc
-    status_row.connection_state = payload.connection_state
-    status_row.battery_percentage = payload.battery_percentage
-    status_row.battery_millivolts = payload.battery_millivolts
-    status_row.is_charging = payload.is_charging
-    status_row.queued_records = payload.queued_records
-    status_row.agent_version = payload.agent_version
-
+    stmt = (
+        pg_insert(CollectorStatus)
+        .values(
+            device_id=payload.device_id,
+            last_seen=now_utc,
+            connection_state=payload.connection_state,
+            battery_percentage=payload.battery_percentage,
+            battery_millivolts=payload.battery_millivolts,
+            is_charging=payload.is_charging,
+            queued_records=payload.queued_records,
+            agent_version=payload.agent_version,
+        )
+        .on_conflict_do_update(
+            index_elements=["device_id"],
+            set_={
+                "last_seen": now_utc,
+                "connection_state": payload.connection_state,
+                "battery_percentage": payload.battery_percentage,
+                "battery_millivolts": payload.battery_millivolts,
+                "is_charging": payload.is_charging,
+                "queued_records": payload.queued_records,
+                "agent_version": payload.agent_version,
+            },
+        )
+    )
+    await db.execute(stmt)
     await db.commit()
-    await db.refresh(status_row)
-    return status_row
+
+    query = select(CollectorStatus).where(CollectorStatus.device_id == payload.device_id)
+    result = await db.execute(query)
+    return result.scalar_one()
