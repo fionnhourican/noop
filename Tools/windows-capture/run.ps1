@@ -2,8 +2,9 @@
 # NOOP Windows Collector — One-Click Launcher
 # ===================================================
 
-$ErrorActionPreference = "Stop"
-Set-Location $PSScriptRoot
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $ScriptDir) { $ScriptDir = (Get-Location).Path }
+Set-Location $ScriptDir
 
 Write-Host "===================================================" -ForegroundColor Cyan
 Write-Host "Starting NOOP Windows 11 WHOOP Collector..." -ForegroundColor Cyan
@@ -12,7 +13,8 @@ Write-Host "===================================================" -ForegroundColo
 Write-Host ""
 
 Write-Host "Verifying Python dependencies..." -ForegroundColor Yellow
-pip install -r requirements.txt
+$ReqFile = Join-Path $ScriptDir "requirements.txt"
+python -m pip install -r $ReqFile
 
 Write-Host ""
 Write-Host "Starting NOOP Collector Agent..." -ForegroundColor Green
