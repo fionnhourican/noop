@@ -41,18 +41,31 @@ The web dashboard is served on port `8080` (or your Tailscale HTTPS URL) and fea
 
 ### 1. Server Setup
 
-Navigate to `homelab/` on your Linux server:
+#### Option A: Quickstart via Pre-Built Docker Images (No Repo Clone Required)
+```bash
+# 1. Create a directory on your home server
+mkdir -p ~/noop-homelab && cd ~/noop-homelab
 
+# 2. Download the production compose file and environment template
+curl -fsSL -O https://raw.githubusercontent.com/fionnhourican/noop/main/homelab/docker-compose.prod.yml
+curl -fsSL -O https://raw.githubusercontent.com/fionnhourican/noop/main/homelab/.env.example
+mv docker-compose.prod.yml docker-compose.yml
+cp .env.example .env
+
+# 3. Configure secrets in .env
+nano .env
+
+# 4. Pull pre-built images and start services
+docker compose pull
+docker compose up -d
+```
+
+#### Option B: Build from Git Source
 ```bash
 cd homelab
 cp .env.example .env
 # Edit .env and set strong secrets for POSTGRES_PASSWORD, INGESTION_TOKEN, and DASHBOARD_TOKEN
-```
-
-Start the containers:
-
-```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
 Verify that the health check passes:

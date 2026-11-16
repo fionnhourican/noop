@@ -43,13 +43,18 @@ flowchart TD
 - Docker Engine 24.0+ & Docker Compose v2 installed.
 - Tailscale installed and authenticated on your personal Tailnet.
 
-### Step 1: Clone Repository & Configure Environment
-```bash
-# Clone your private fork
-git clone https://github.com/fionnhourican/noop.git
-cd noop/homelab
+### Option A: Zero-Clone Quickstart (Recommended — Pre-Built Docker Images from GHCR)
 
-# Initialize production environment configuration
+You do **not** need to clone this git repository on your home server. You can download the production compose file and launch the stack directly:
+
+```bash
+# 1. Create a dedicated directory for NOOP Home Lab
+mkdir -p ~/noop-homelab && cd ~/noop-homelab
+
+# 2. Download the standalone production compose file and environment template
+curl -fsSL -O https://raw.githubusercontent.com/fionnhourican/noop/main/homelab/docker-compose.prod.yml
+curl -fsSL -O https://raw.githubusercontent.com/fionnhourican/noop/main/homelab/.env.example
+mv docker-compose.prod.yml docker-compose.yml
 cp .env.example .env
 ```
 
@@ -65,7 +70,7 @@ openssl rand -hex 32
 openssl rand -hex 24
 ```
 
-Edit `homelab/.env` with your editor of choice:
+Edit `.env` with your editor of choice (`nano .env`):
 ```ini
 POSTGRES_USER=noop
 POSTGRES_PASSWORD=your_generated_postgres_password
@@ -76,9 +81,29 @@ DASHBOARD_TOKEN=your_generated_dashboard_token
 ENVIRONMENT=production
 ```
 
-### Step 2: Launch Docker Compose Services
+Start the containers (pulls pre-built multi-arch `linux/amd64` and `linux/arm64` images from GitHub Container Registry):
 ```bash
-cd homelab
+docker compose pull
+docker compose up -d
+```
+
+*(Note: Alembic database migrations run automatically on container startup via `entrypoint.sh`.)*
+
+---
+
+### Option B: Build from Git Source
+
+If you prefer building from source on your Linux server:
+```bash
+# Clone your fork
+git clone https://github.com/fionnhourican/noop.git
+cd noop/homelab
+
+# Initialize production environment configuration
+cp .env.example .env
+# Edit .env with your generated tokens
+
+# Build and start services
 docker compose up -d --build
 ```
 
