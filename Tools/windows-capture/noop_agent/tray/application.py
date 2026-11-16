@@ -5,14 +5,22 @@ import os
 import subprocess
 import sys
 import threading
-from typing import Callable, Optional
-from PIL import Image, ImageDraw
+from typing import Any, Callable, Optional
+
+try:
+    from PIL import Image, ImageDraw
+except ImportError:
+    Image = None  # type: ignore
+    ImageDraw = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
 
-def create_status_icon(color_hex: str) -> Image.Image:
+def create_status_icon(color_hex: str) -> Any:
     """Generate a 64x64 icon with a solid circular status indicator."""
+    if Image is None or ImageDraw is None:
+        return None
+
     size = (64, 64)
     image = Image.new("RGBA", size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
@@ -108,17 +116,24 @@ class TrayApp:
 
     def run(self) -> None:
         """Start the system tray loop (blocking call, runs on tray thread)."""
-        import pystray
+        try:
+            import pystray
+        except ImportError:
+            logger.info("pystray not installed; running in headless mode without system tray.")
+            return
 
-        initial_color = self.STATUS_COLORS.get(self.current_state, "#94a3b8")
-        self.icon = pystray.Icon(
-            name="NOOP_Collector",
-            icon=create_status_icon(initial_color),
-            title=self.status_text,
-            menu=self._build_menu(),
-        )
-        logger.info("System tray initialized.")
-        self.icon.run()
+        try:
+            initial_color = self.STATUS_COLORS.get(self.current_state, "#94a3b8")
+            self.icon = pystray.Icon(
+                name="NOOP_Collector",
+                icon=create_status_icon(initial_color),
+                title=self.status_text,
+                menu=self._build_menu(),
+            )
+            logger.info("System tray initialized.")
+            self.icon.run()
+        except Exception as e:
+            logger.warning("Could not initialize system tray GUI (%s); running headless.", e)
 
     def stop(self) -> None:
         """Terminate the tray application and trigger supervisor shutdown."""
