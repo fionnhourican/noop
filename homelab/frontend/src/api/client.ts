@@ -41,7 +41,7 @@ async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise
     headers,
   });
 
-  if (response.status === 401) {
+  if (response.status === 401 || response.status === 403) {
     if (unauthorizedHandler) {
       unauthorizedHandler();
     }

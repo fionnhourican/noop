@@ -52,8 +52,9 @@ async def get_current_dashboard_user(
 
     if not secrets.compare_digest(provided_token.encode("utf-8"), expected_token.encode("utf-8")):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid dashboard token",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     return provided_token
