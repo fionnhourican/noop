@@ -1,0 +1,42 @@
+# ==============================================================================
+# NOOP Windows Collector Configuration
+# Save as %LOCALAPPDATA%\NOOP\config.yaml
+# ==============================================================================
+
+# Device Configuration
+device:
+  # Optional: specific BLE MAC address (e.g., "EB:12:34:56:78:9A")
+  # If omitted, scanner will automatically find and connect to the nearest advertising WHOOP 4.0
+  address: null
+  # Name or subject label
+  name: "WHOOP 4.0"
+  model: "whoop4"
+
+# Home Server Synchronization
+server:
+  # Remote or Tailscale MagicDNS address of your home server
+  # Example: "https://whoop-server.your-tailnet.ts.net/api/v1" or "http://127.0.0.1:8080/api/v1"
+  url: "https://your-server-name.your-tailnet.ts.net/api/v1"
+  # Ingestion Bearer Token
+  # If left null, the agent will look up the token in Windows Credential Manager:
+  # target: "NOOP_HomeLab_Ingestion", account: "collector"
+  token: null
+  # How often to trigger sync batch uploads in seconds
+  sync_interval_seconds: 30
+  # Max records per upload batch
+  batch_size: 100
+
+# Bluetooth LE Collection Settings
+ble:
+  # Scan timeout in seconds
+  scan_timeout: 10.0
+  # Connection retry backoff limits
+  min_retry_delay: 2.0
+  max_retry_delay: 60.0
+  # Automatically request OS-level pairing if GATT characteristics require security
+  auto_pair: true
+
+# Logging Configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  # Stored in %LOCALAPPDATA%\NOOP\logs\collector.log
